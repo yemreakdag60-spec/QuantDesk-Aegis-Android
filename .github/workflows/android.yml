@@ -10,11 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Extract Android source
-        run: unzip -o QuantDesk-Aegis-Android-Source.zip -d project
+        run: unzip -o QuantDesk-Aegis-Android-Source-V2.zip -d project
 
       - uses: actions/setup-java@v4
         with:
