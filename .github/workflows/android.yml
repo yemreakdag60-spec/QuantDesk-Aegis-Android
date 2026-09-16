@@ -1,4 +1,4 @@
-name: Build QuantDesk FlowGuard V4.2
+name: Build QuantDesk FlowGuard V4.2.1
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Extract Android source
-        run: unzip -o QuantDesk-Aegis-Android-Source-V4.2.zip -d project
+        run: unzip -o QuantDesk-Aegis-Android-Source-V4.2.1.zip -d project
 
       - uses: actions/setup-java@v4
         with:
