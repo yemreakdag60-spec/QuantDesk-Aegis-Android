@@ -23,16 +23,59 @@ jobs:
         with:
           gradle-version: '8.13'
 
+      - name: Locate Android project
+        id: project
+        shell: bash
+        run: |
+          PROJECT_FILE="$(find . -type f -name settings.gradle -print -quit)"
+
+          if [ -z "$PROJECT_FILE" ]; then
+            ZIP_COUNT=0
+
+            while IFS= read -r SOURCE_ZIP; do
+              ZIP_COUNT=$((ZIP_COUNT + 1))
+              EXTRACT_DIR="$RUNNER_TEMP/aegis-source/$ZIP_COUNT"
+              mkdir -p "$EXTRACT_DIR"
+
+              if unzip -q "$SOURCE_ZIP" -d "$EXTRACT_DIR"; then
+                PROJECT_FILE="$(find "$EXTRACT_DIR" -type f -name settings.gradle -print -quit)"
+
+                if [ -n "$PROJECT_FILE" ]; then
+                  break
+                fi
+              fi
+            done < <(find . -maxdepth 3 -type f -iname '*.zip' -print)
+
+            if [ "$ZIP_COUNT" -eq 0 ]; then
+              echo "Neither settings.gradle nor a source ZIP was found in the repository." >&2
+              exit 1
+            fi
+          fi
+
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "settings.gradle was not found after extracting the source ZIP." >&2
+            exit 1
+          fi
+
+          PROJECT_ROOT="$(dirname "$PROJECT_FILE")"
+          echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+          echo "Android project: $PROJECT_ROOT"
+
       - name: Validate bundled UI
         run: |
+          cd "${{ steps.project.outputs.root }}"
           node -e "const fs=require('fs'),vm=require('vm');const h=fs.readFileSync('app/src/main/assets/index.html','utf8');const m=h.match(/<script>([\\s\\S]*?)<\\/script>/);if(!m)throw new Error('Bundled UI script was not found');new vm.Script(m[1],{filename:'index.html'});for(const x of ['Net R/R TP1','Net R/R TP2','Net R/R TP3','Adaptif Stop Loss'])if(!h.includes(x))throw new Error('Missing field: '+x);console.log('Bundled UI validation passed');"
 
       - name: Verify and build debug APK
-        run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
+        run: |
+          cd "${{ steps.project.outputs.root }}"
+          gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v6
         with:
           name: QuantDesk-Aegis-Professional-V4.4.0
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            **/app/build/outputs/apk/debug/app-debug.apk
+            ${{ runner.temp }}/aegis-source/**/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
