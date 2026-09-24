@@ -24,7 +24,8 @@ jobs:
           gradle-version: '8.13'
 
       - name: Validate bundled UI
-        run: node tools/validate-ui.js
+        run: |
+          node -e "const fs=require('fs'),vm=require('vm');const h=fs.readFileSync('app/src/main/assets/index.html','utf8');const m=h.match(/<script>([\\s\\S]*?)<\\/script>/);if(!m)throw new Error('Bundled UI script was not found');new vm.Script(m[1],{filename:'index.html'});for(const x of ['Net R/R TP1','Net R/R TP2','Net R/R TP3','Adaptif Stop Loss'])if(!h.includes(x))throw new Error('Missing field: '+x);console.log('Bundled UI validation passed');"
 
       - name: Verify and build debug APK
         run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
