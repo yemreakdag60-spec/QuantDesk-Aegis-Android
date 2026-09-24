@@ -8,15 +8,22 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+
     permissions:
       contents: read
+
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-java@v5
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: '8.13'
 
@@ -24,57 +31,138 @@ jobs:
         id: project
         shell: bash
         run: |
-          PROJECT_FILE="$(find . -type f -name settings.gradle -print -quit)"
-          if [ -n "$PROJECT_FILE" ] && ! grep -Eq "versionName[[:space:]]+['\"]4\\.4\\.0['\"]" "$(dirname "$PROJECT_FILE")/app/build.gradle"; then
-            PROJECT_FILE=""
-          fi
-          if [ -z "$PROJECT_FILE" ]; then
-            ZIP_COUNT=0
-            while IFS= read -r SOURCE_ZIP; do
-              ZIP_COUNT=$((ZIP_COUNT + 1))
-              EXTRACT_DIR="$RUNNER_TEMP/aegis-source/$ZIP_COUNT"
-              mkdir -p "$EXTRACT_DIR"
-              if unzip -q "$SOURCE_ZIP" -d "$EXTRACT_DIR"; then
-                CANDIDATE_FILE="$(find "$EXTRACT_DIR" -type f -name settings.gradle -print -quit)"
-                if [ -n "$CANDIDATE_FILE" ] && grep -Eq "versionName[[:space:]]+['\"]4\\.4\\.0['\"]" "$(dirname "$CANDIDATE_FILE")/app/build.gradle"; then
-                  PROJECT_FILE="$CANDIDATE_FILE"
-                  break
-                fi
-              fi
-            done < <(find . -maxdepth 3 -type f -iname '*.zip' -print)
-            if [ "$ZIP_COUNT" -eq 0 ]; then
-              echo "Neither settings.gradle nor a source ZIP was found in the repository." >&2
-              exit 1
+          set -euo pipefail
+
+          PROJECT_FILE="$(find . -type f -name settings.gradle -print -quit || true)"
+
+          if [ -n "$PROJECT_FILE" ]; then
+            ROOT="$(dirname "$PROJECT_FILE")"
+
+            if ! grep -Eq "versionName[[:space:]]+['\"]4\.4\.0['\"]" "$ROOT/app/build.gradle"; then
+              PROJECT_FILE=""
             fi
           fi
+
           if [ -z "$PROJECT_FILE" ]; then
-            echo "settings.gradle was not found after extracting the source ZIP." >&2
+            SOURCE_ZIP=""
+
+            if [ -f "QuantDesk-Aegis-V4.4.0-Professional-Source-FIXED.zip" ]; then
+              SOURCE_ZIP="QuantDesk-Aegis-V4.4.0-Professional-Source-FIXED.zip"
+
+            elif [ -f "QuantDesk-Aegis-V4.4.0-Professional-Source.zip" ]; then
+              SOURCE_ZIP="QuantDesk-Aegis-V4.4.0-Professional-Source.zip"
+
+            else
+              SOURCE_ZIP="$(find . -maxdepth 3 -type f -iname '*V4.4.0*.zip' -print -quit || true)"
+            fi
+
+            if [ -z "$SOURCE_ZIP" ]; then
+              echo "V4.4.0 source ZIP was not found." >&2
+              exit 1
+            fi
+
+            echo "Using source archive: $SOURCE_ZIP"
+
+            EXTRACT_DIR="$RUNNER_TEMP/aegis-source"
+
+            rm -rf "$EXTRACT_DIR"
+            mkdir -p "$EXTRACT_DIR"
+
+            unzip -q "$SOURCE_ZIP" -d "$EXTRACT_DIR"
+
+            PROJECT_FILE="$(find "$EXTRACT_DIR" -type f -name settings.gradle -print -quit || true)"
+          fi
+
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "settings.gradle was not found." >&2
             exit 1
           fi
+
           PROJECT_ROOT="$(dirname "$PROJECT_FILE")"
+
+          if [ ! -f "$PROJECT_ROOT/app/build.gradle" ]; then
+            echo "app/build.gradle was not found." >&2
+            exit 1
+          fi
+
+          if ! grep -Eq "versionName[[:space:]]+['\"]4\.4\.0['\"]" "$PROJECT_ROOT/app/build.gradle"; then
+            echo "Expected versionName 4.4.0 was not found." >&2
+            exit 1
+          fi
+
           echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
           echo "Android project: $PROJECT_ROOT"
 
       - name: Validate bundled UI
+        shell: bash
         run: |
+          set -euo pipefail
+
           cd "${{ steps.project.outputs.root }}"
-          node -e "const fs=require('fs'),vm=require('vm');const h=fs.readFileSync('app/src/main/assets/index.html','utf8');const m=h.match(/<script>([\\s\\S]*?)<\\/script>/);if(!m)throw new Error('Bundled UI script was not found');new vm.Script(m[1],{filename:'index.html'});for(const x of ['Net R/R TP1','Net R/R TP2','Net R/R TP3','Adaptif Stop Loss'])if(!h.includes(x))throw new Error('Missing field: '+x);console.log('Bundled UI validation passed');"
+
+          node - <<'NODE'
+          const fs = require('fs');
+          const vm = require('vm');
+
+          const path = 'app/src/main/assets/index.html';
+
+          if (!fs.existsSync(path)) {
+            throw new Error('Bundled UI index.html was not found');
+          }
+
+          const html = fs.readFileSync(path, 'utf8');
+
+          const match = html.match(/<script>([\s\S]*?)<\/script>/);
+
+          if (!match) {
+            throw new Error('Bundled UI script was not found');
+          }
+
+          new vm.Script(match[1], {
+            filename: 'index.html'
+          });
+
+          for (const field of [
+            'Net R/R TP1',
+            'Net R/R TP2',
+            'Net R/R TP3',
+            'Adaptif Stop Loss'
+          ]) {
+            if (!html.includes(field)) {
+              throw new Error('Missing field: ' + field);
+            }
+          }
+
+          console.log('Bundled UI validation passed');
+          NODE
 
       - name: Run unit tests
+        shell: bash
         run: |
+          set -euo pipefail
+
           cd "${{ steps.project.outputs.root }}"
+
           gradle --no-daemon :app:testDebugUnitTest
 
       - name: Build debug APK
+        shell: bash
         run: |
+          set -euo pipefail
+
           cd "${{ steps.project.outputs.root }}"
+
           gradle --no-daemon :app:assembleDebug
 
       - name: Run Android Lint
         id: lint
         continue-on-error: true
+        shell: bash
         run: |
+          set -euo pipefail
+
           cd "${{ steps.project.outputs.root }}"
+
           gradle --no-daemon :app:lintDebug
 
       - name: Upload Lint report
@@ -83,24 +171,22 @@ jobs:
         with:
           name: QuantDesk-Aegis-V4.4.0-Lint-Report
           path: |
-            **/app/build/reports/lint-results-debug.html
-            **/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
-            ${{ runner.temp }}/aegis-source/**/app/build/reports/lint-results-debug.html
-            ${{ runner.temp }}/aegis-source/**/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+            ${{ steps.project.outputs.root }}/app/build/reports/lint-results-debug.html
+            ${{ steps.project.outputs.root }}/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
           if-no-files-found: warn
 
       - name: Upload APK
-        if: success() || steps.lint.outcome == 'failure'
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: QuantDesk-Aegis-Professional-V4.4.0
           path: |
-            **/app/build/outputs/apk/debug/app-debug.apk
-            ${{ runner.temp }}/aegis-source/**/app/build/outputs/apk/debug/app-debug.apk
+            ${{ steps.project.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Enforce Lint result
         if: steps.lint.outcome == 'failure'
+        shell: bash
         run: |
-          echo "Android Lint failed. Download the Lint Report artifact for the complete diagnostics." >&2
+          echo "Android Lint failed. Download the Lint Report artifact for diagnostics." >&2
           exit 1
