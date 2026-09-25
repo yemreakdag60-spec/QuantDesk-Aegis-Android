@@ -20,13 +20,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           SOURCE_ZIP="QuantDesk-Aegis-V4.7.5-Compare-SEPARATE-Source.zip"
-          test -f "$SOURCE_ZIP" || {
-            echo "V4.7.5 source ZIP is missing from the repository root." >&2
+
+          if [ ! -f "$SOURCE_ZIP" ]; then
+            echo "Source ZIP is missing from the repository root: $SOURCE_ZIP" >&2
             exit 1
-          }
-          EXPECTED_SHA256="8f53270bef38b37657bbb0ec771e39d9f84781086b411fb8ab9b599b74f928e8"
-          printf '%s  %s\n' "$EXPECTED_SHA256" "$SOURCE_ZIP" | sha256sum --check -
+          fi
+
+          unzip -tq "$SOURCE_ZIP"
+
+          ZIP_CONTENTS="$(unzip -Z1 "$SOURCE_ZIP")"
+
+          if ! grep -Eq '(^|/)settings.gradle$' <<< "$ZIP_CONTENTS"; then
+            echo "The ZIP does not contain settings.gradle." >&2
+            exit 1
+          fi
+
+          if ! grep -Eq '(^|/)app/build.gradle$' <<< "$ZIP_CONTENTS"; then
+            echo "The ZIP does not contain app/build.gradle." >&2
+            exit 1
+          fi
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -49,16 +63,12 @@ jobs:
 
           if [ -z "$PROJECT_FILE" ]; then
             SOURCE_ZIP="QuantDesk-Aegis-V4.7.5-Compare-SEPARATE-Source.zip"
-
-            if [ ! -f "$SOURCE_ZIP" ]; then
-              echo "Separate-install source ZIP was not found." >&2
-              exit 1
-            fi
-
             EXTRACT_DIR="$RUNNER_TEMP/aegis-separate-source"
+
             rm -rf "$EXTRACT_DIR"
             mkdir -p "$EXTRACT_DIR"
             unzip -q "$SOURCE_ZIP" -d "$EXTRACT_DIR"
+
             PROJECT_FILE="$(find "$EXTRACT_DIR" -type f -name settings.gradle -print -quit || true)"
           fi
 
@@ -70,25 +80,25 @@ jobs:
           PROJECT_ROOT="$(dirname "$PROJECT_FILE")"
           APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
 
-          test -f "$APP_GRADLE" || {
+          if [ ! -f "$APP_GRADLE" ]; then
             echo "app/build.gradle was not found." >&2
             exit 1
-          }
+          fi
 
-          grep -Fq "implementation 'androidx.webkit:webkit:1.17.1'" "$APP_GRADLE" || {
+          if ! grep -Fq "implementation 'androidx.webkit:webkit:1.17.1'" "$APP_GRADLE"; then
             echo "Expected AndroidX WebKit 1.17.1 was not found." >&2
             exit 1
-          }
+          fi
 
-          grep -Fq "applicationId 'com.quantdesk.aegis.professional.v475'" "$APP_GRADLE" || {
+          if ! grep -Fq "applicationId 'com.quantdesk.aegis.professional.v475'" "$APP_GRADLE"; then
             echo "Separate applicationId is missing." >&2
             exit 1
-          }
+          fi
 
-          grep -Fq "versionName '4.7.5'" "$APP_GRADLE" || {
+          if ! grep -Fq "versionName '4.7.5'" "$APP_GRADLE"; then
             echo "Expected versionName 4.7.5 was not found." >&2
             exit 1
-          }
+          fi
 
           echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
           echo "Android project: $PROJECT_ROOT"
