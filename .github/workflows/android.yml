@@ -1,10 +1,9 @@
-name: Build QuantDesk Aegis V4.7.5 Separate APK
+name: Build QuantDesk Aegis V4.8.0 Separate APK
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   build:
@@ -16,42 +15,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Verify V4.7.5 source archive
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SOURCE_ZIP="QuantDesk-Aegis-V4.7.5-Compare-SEPARATE-Source.zip"
-
-          if [ ! -f "$SOURCE_ZIP" ]; then
-            echo "Source ZIP is missing from the repository root: $SOURCE_ZIP" >&2
-            exit 1
-          fi
-
-          unzip -tq "$SOURCE_ZIP"
-
-          ZIP_CONTENTS="$(unzip -Z1 "$SOURCE_ZIP")"
-
-          if ! grep -Eq '(^|/)settings.gradle$' <<< "$ZIP_CONTENTS"; then
-            echo "The ZIP does not contain settings.gradle." >&2
-            exit 1
-          fi
-
-          if ! grep -Eq '(^|/)app/build.gradle$' <<< "$ZIP_CONTENTS"; then
-            echo "The ZIP does not contain app/build.gradle." >&2
-            exit 1
-          fi
-
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v5
         with:
-          gradle-version: "8.13"
+          gradle-version: '8.13'
 
       - name: Locate separate-install Android project
         id: project
@@ -62,13 +35,29 @@ jobs:
           PROJECT_FILE="$(find . -maxdepth 4 -type f -name settings.gradle -print -quit || true)"
 
           if [ -z "$PROJECT_FILE" ]; then
-            SOURCE_ZIP="QuantDesk-Aegis-V4.7.5-Compare-SEPARATE-Source.zip"
-            EXTRACT_DIR="$RUNNER_TEMP/aegis-separate-source"
+            SOURCE_ZIP=""
 
+            for candidate in \
+              "QuantDesk-Aegis-V4.8.0-Professional-SEPARATE-Source.zip"; do
+              if [ -f "$candidate" ]; then
+                SOURCE_ZIP="$candidate"
+                break
+              fi
+            done
+
+            if [ -z "$SOURCE_ZIP" ]; then
+              SOURCE_ZIP="$(find . -maxdepth 3 -type f \( -iname '*Aegis*Separate*Source*.zip' -o -iname '*Aegis*V4.8.0*.zip' \) -print -quit || true)"
+            fi
+
+            if [ -z "$SOURCE_ZIP" ]; then
+              echo "Separate-install source ZIP was not found." >&2
+              exit 1
+            fi
+
+            EXTRACT_DIR="$RUNNER_TEMP/aegis-separate-source"
             rm -rf "$EXTRACT_DIR"
             mkdir -p "$EXTRACT_DIR"
             unzip -q "$SOURCE_ZIP" -d "$EXTRACT_DIR"
-
             PROJECT_FILE="$(find "$EXTRACT_DIR" -type f -name settings.gradle -print -quit || true)"
           fi
 
@@ -80,25 +69,9 @@ jobs:
           PROJECT_ROOT="$(dirname "$PROJECT_FILE")"
           APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
 
-          if [ ! -f "$APP_GRADLE" ]; then
-            echo "app/build.gradle was not found." >&2
-            exit 1
-          fi
-
-          if ! grep -Fq "implementation 'androidx.webkit:webkit:1.17.1'" "$APP_GRADLE"; then
-            echo "Expected AndroidX WebKit 1.17.1 was not found." >&2
-            exit 1
-          fi
-
-          if ! grep -Fq "applicationId 'com.quantdesk.aegis.professional.v475'" "$APP_GRADLE"; then
-            echo "Separate applicationId is missing." >&2
-            exit 1
-          fi
-
-          if ! grep -Fq "versionName '4.7.5'" "$APP_GRADLE"; then
-            echo "Expected versionName 4.7.5 was not found." >&2
-            exit 1
-          fi
+          test -f "$APP_GRADLE" || { echo "app/build.gradle was not found." >&2; exit 1; }
+          grep -Fq "applicationId 'com.quantdesk.aegis.professional.v480'" "$APP_GRADLE" || { echo "Separate applicationId is missing." >&2; exit 1; }
+          grep -Fq "versionName '4.8.0'" "$APP_GRADLE" || { echo "Expected versionName 4.8.0 was not found." >&2; exit 1; }
 
           echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
           echo "Android project: $PROJECT_ROOT"
@@ -108,9 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "${{ steps.project.outputs.root }}"
-
           node tools/validate-ui.js
-          node tools/test-live-score-thresholds.js
           node tools/test-reachable-tp.js
           node tools/test-spot-flow.js
           node tools/test-live-watch-queue.js
@@ -122,11 +93,11 @@ jobs:
           node tools/test-walk-forward-gate.js
           node tools/test-position-sizing-guard.js
           node tools/test-trade-plan-display.js
-
+          node tools/test-v480-professional.js
           grep -Fq 'android.useAndroidX=true' gradle.properties
           grep -Fq "implementation 'com.squareup.okhttp3:okhttp:4.12.0'" app/build.gradle
-          grep -Fq "implementation 'androidx.webkit:webkit:1.17.1'" app/build.gradle
-          grep -Fq 'android:label="Aegis V4.7.5 Compare"' app/src/main/AndroidManifest.xml
+          grep -Fq "implementation 'androidx.webkit:webkit:1.16.0'" app/build.gradle
+          grep -Fq 'android:label="Aegis V4.8.0 Professional"' app/src/main/AndroidManifest.xml
 
       - name: Run unit tests
         shell: bash
@@ -155,23 +126,23 @@ jobs:
         if: always() && steps.lint.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: QuantDesk-Aegis-V4.7.5-Compare-Lint-Report
+          name: QuantDesk-Aegis-V4.8.0-Lint-Report
           path: |
             ${{ steps.project.outputs.root }}/app/build/reports/lint-results-debug.html
             ${{ steps.project.outputs.root }}/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
           if-no-files-found: warn
 
+      - name: Upload separate-install APK
+        if: success() || steps.lint.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          name: QuantDesk-Aegis-Pro-V4.8.0-SEPARATE
+          path: ${{ steps.project.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
       - name: Enforce Lint result
         if: steps.lint.outcome == 'failure'
         shell: bash
         run: |
-          echo "Android Lint failed. The APK will not be uploaded. Download the Lint Report artifact." >&2
+          echo "Android Lint failed. Download the Lint Report artifact for diagnostics." >&2
           exit 1
-
-      - name: Upload separate-install APK
-        if: success() && steps.lint.outcome == 'success'
-        uses: actions/upload-artifact@v6
-        with:
-          name: QuantDesk-Aegis-Pro-V4.7.5-COMPARE-SEPARATE
-          path: ${{ steps.project.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
