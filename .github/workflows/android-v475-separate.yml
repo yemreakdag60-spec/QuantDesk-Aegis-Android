@@ -79,6 +79,8 @@ jobs:
           APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
 
           test -f "$APP_GRADLE" || { echo "app/build.gradle was not found." >&2; exit 1; }
+          sed -i "s/androidx.webkit:webkit:1.16.0/androidx.webkit:webkit:1.17.1/" "$APP_GRADLE"
+          grep -Fq "implementation 'androidx.webkit:webkit:1.17.1'" "$APP_GRADLE" || { echo "Could not set the supported AndroidX WebKit version." >&2; exit 1; }
           grep -Fq "applicationId 'com.quantdesk.aegis.professional.v475'" "$APP_GRADLE" || { echo "Separate applicationId is missing." >&2; exit 1; }
           grep -Fq "versionName '4.7.5'" "$APP_GRADLE" || { echo "Expected versionName 4.7.5 was not found." >&2; exit 1; }
 
@@ -105,7 +107,7 @@ jobs:
           node tools/test-trade-plan-display.js
           grep -Fq 'android.useAndroidX=true' gradle.properties
           grep -Fq "implementation 'com.squareup.okhttp3:okhttp:4.12.0'" app/build.gradle
-          grep -Fq "implementation 'androidx.webkit:webkit:1.16.0'" app/build.gradle
+          grep -Fq "implementation 'androidx.webkit:webkit:1.17.1'" app/build.gradle
           grep -Fq 'android:label="Aegis V4.7.5 Compare"' app/src/main/AndroidManifest.xml
 
       - name: Run unit tests
