@@ -1,4 +1,4 @@
-name: Build QuantDesk Aegis V4.8.4 Separate APK
+name: Build QuantDesk Sentinel X Separate APK
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+
     permissions:
       contents: read
 
@@ -26,7 +27,7 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Locate separate-install Android project
+      - name: Locate Android project
         id: project
         shell: bash
         run: |
@@ -35,34 +36,8 @@ jobs:
           PROJECT_FILE="$(find . -maxdepth 4 -type f -name settings.gradle -print -quit || true)"
 
           if [ -z "$PROJECT_FILE" ]; then
-            SOURCE_ZIP=""
-
-            for candidate in \
-              "QuantDesk-Aegis-V4.8.4-Professional-SEPARATE-Source.zip"; do
-              if [ -f "$candidate" ]; then
-                SOURCE_ZIP="$candidate"
-                break
-              fi
-            done
-
-            if [ -z "$SOURCE_ZIP" ]; then
-              SOURCE_ZIP="$(find . -maxdepth 3 -type f \( -iname '*Aegis*Separate*Source*.zip' -o -iname '*Aegis*V4.8.4*.zip' \) -print -quit || true)"
-            fi
-
-            if [ -z "$SOURCE_ZIP" ]; then
-              echo "Separate-install source ZIP was not found." >&2
-              exit 1
-            fi
-
-            EXTRACT_DIR="$RUNNER_TEMP/aegis-separate-source"
-            rm -rf "$EXTRACT_DIR"
-            mkdir -p "$EXTRACT_DIR"
-            unzip -q "$SOURCE_ZIP" -d "$EXTRACT_DIR"
-            PROJECT_FILE="$(find "$EXTRACT_DIR" -type f -name settings.gradle -print -quit || true)"
-          fi
-
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "settings.gradle was not found." >&2
+            echo "settings.gradle bulunamadı." >&2
+            echo "ZIP içindeki dosyaları deponun ana dizinine yüklediğinden emin ol." >&2
             exit 1
           fi
 
@@ -70,24 +45,24 @@ jobs:
           APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
 
           test -f "$APP_GRADLE" || {
-            echo "app/build.gradle was not found." >&2
+            echo "app/build.gradle bulunamadı." >&2
             exit 1
           }
 
-          grep -Fq "applicationId 'com.quantdesk.aegis.professional.v484'" "$APP_GRADLE" || {
-            echo "V4.8.4 separate applicationId is missing." >&2
+          grep -Fq "applicationId 'com.quantdesk.sentinel.analysis.v100'" "$APP_GRADLE" || {
+            echo "Sentinel X uygulama kimliği bulunamadı." >&2
             exit 1
           }
 
-          grep -Fq "versionName '4.8.4'" "$APP_GRADLE" || {
-            echo "Expected versionName 4.8.4 was not found." >&2
+          grep -Fq "versionName '1.0.0'" "$APP_GRADLE" || {
+            echo "Sentinel X versionName 1.0.0 bulunamadı." >&2
             exit 1
           }
 
           echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
           echo "Android project: $PROJECT_ROOT"
 
-      - name: Validate bundled UI and source invariants
+      - name: Validate bundled UI and source
         shell: bash
         run: |
           set -euo pipefail
@@ -111,7 +86,7 @@ jobs:
           grep -Fq 'android.useAndroidX=true' gradle.properties
           grep -Fq "implementation 'com.squareup.okhttp3:okhttp:4.12.0'" app/build.gradle
           grep -Fq "implementation 'androidx.webkit:webkit:1.16.0'" app/build.gradle
-          grep -Fq 'android:label="Aegis V4.8.4 Professional"' app/src/main/AndroidManifest.xml
+          grep -Fq 'android:label="QuantDesk Sentinel X"' app/src/main/AndroidManifest.xml
 
       - name: Run unit tests
         shell: bash
@@ -140,16 +115,23 @@ jobs:
         if: always() && steps.lint.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: QuantDesk-Aegis-V4.8.4-Lint-Report
+          name: QuantDesk-Sentinel-X-V1.0.0-Lint-Report
           path: |
             ${{ steps.project.outputs.root }}/app/build/reports/lint-results-debug.html
             ${{ steps.project.outputs.root }}/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
           if-no-files-found: warn
 
-      - name: Upload separate-install APK
+      - name: Upload Sentinel X APK
         if: success() || steps.lint.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: QuantDesk-Aegis-Pro-V4.8.4-SEPARATE
+          name: QuantDesk-Sentinel-X-V1.0.0-SEPARATE
           path: ${{ steps.project.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Enforce Lint result
+        if: steps.lint.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Android Lint başarısız oldu. Tanılama için Lint Report artefaktını indir." >&2
+          exit 1
