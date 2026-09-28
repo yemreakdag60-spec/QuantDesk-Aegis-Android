@@ -1,4 +1,4 @@
-name: Build QuantDesk Aegis V4.8.3 Separate APK
+name: Build QuantDesk Aegis V4.8.4 Separate APK
 
 on:
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
             SOURCE_ZIP=""
 
             for candidate in \
-              "QuantDesk-Aegis-V4.8.3-Professional-SEPARATE-Source.zip"; do
+              "QuantDesk-Aegis-V4.8.4-Professional-SEPARATE-Source.zip"; do
               if [ -f "$candidate" ]; then
                 SOURCE_ZIP="$candidate"
                 break
@@ -46,7 +46,7 @@ jobs:
             done
 
             if [ -z "$SOURCE_ZIP" ]; then
-              SOURCE_ZIP="$(find . -maxdepth 3 -type f \( -iname '*Aegis*Separate*Source*.zip' -o -iname '*Aegis*V4.8.3*.zip' \) -print -quit || true)"
+              SOURCE_ZIP="$(find . -maxdepth 3 -type f \( -iname '*Aegis*Separate*Source*.zip' -o -iname '*Aegis*V4.8.4*.zip' \) -print -quit || true)"
             fi
 
             if [ -z "$SOURCE_ZIP" ]; then
@@ -69,9 +69,20 @@ jobs:
           PROJECT_ROOT="$(dirname "$PROJECT_FILE")"
           APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
 
-          test -f "$APP_GRADLE" || { echo "app/build.gradle was not found." >&2; exit 1; }
-          grep -Fq "applicationId 'com.quantdesk.aegis.professional.v483'" "$APP_GRADLE" || { echo "V4.8.3 separate applicationId is missing." >&2; exit 1; }
-          grep -Fq "versionName '4.8.3'" "$APP_GRADLE" || { echo "Expected versionName 4.8.3 was not found." >&2; exit 1; }
+          test -f "$APP_GRADLE" || {
+            echo "app/build.gradle was not found." >&2
+            exit 1
+          }
+
+          grep -Fq "applicationId 'com.quantdesk.aegis.professional.v484'" "$APP_GRADLE" || {
+            echo "V4.8.4 separate applicationId is missing." >&2
+            exit 1
+          }
+
+          grep -Fq "versionName '4.8.4'" "$APP_GRADLE" || {
+            echo "Expected versionName 4.8.4 was not found." >&2
+            exit 1
+          }
 
           echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
           echo "Android project: $PROJECT_ROOT"
@@ -81,6 +92,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "${{ steps.project.outputs.root }}"
+
           node tools/validate-ui.js
           node tools/test-reachable-tp.js
           node tools/test-spot-flow.js
@@ -94,11 +106,12 @@ jobs:
           node tools/test-position-sizing-guard.js
           node tools/test-trade-plan-display.js
           node tools/test-v480-professional.js
-          node tools/test-v483-guards.js
+          node tools/test-v484-guards.js
+
           grep -Fq 'android.useAndroidX=true' gradle.properties
           grep -Fq "implementation 'com.squareup.okhttp3:okhttp:4.12.0'" app/build.gradle
           grep -Fq "implementation 'androidx.webkit:webkit:1.16.0'" app/build.gradle
-          grep -Fq 'android:label="Aegis V4.8.3 Professional"' app/src/main/AndroidManifest.xml
+          grep -Fq 'android:label="Aegis V4.8.4 Professional"' app/src/main/AndroidManifest.xml
 
       - name: Run unit tests
         shell: bash
@@ -127,7 +140,7 @@ jobs:
         if: always() && steps.lint.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: QuantDesk-Aegis-V4.8.3-Lint-Report
+          name: QuantDesk-Aegis-V4.8.4-Lint-Report
           path: |
             ${{ steps.project.outputs.root }}/app/build/reports/lint-results-debug.html
             ${{ steps.project.outputs.root }}/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
@@ -137,6 +150,6 @@ jobs:
         if: success() || steps.lint.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: QuantDesk-Aegis-Pro-V4.8.3-SEPARATE
+          name: QuantDesk-Aegis-Pro-V4.8.4-SEPARATE
           path: ${{ steps.project.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
