@@ -1,4 +1,4 @@
-name: Build QuantDesk Sentinel X Separate APK
+name: Build QuantDesk Autopilot Live Separate APK
 
 on:
   workflow_dispatch:
@@ -27,58 +27,40 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Locate or extract Android project
+      - name: Locate Android project
         id: project
         shell: bash
         run: |
           set -euo pipefail
 
-          PROJECT_FILE="$(find . -maxdepth 8 -type f -name settings.gradle -print -quit || true)"
+          PROJECT_FILE="$(find . -maxdepth 4 -type f -name settings.gradle -print -quit || true)"
 
           if [ -z "$PROJECT_FILE" ]; then
-            SOURCE_ZIP="$(find . -maxdepth 5 -type f -iname '*.zip' -print -quit || true)"
-
-            if [ -z "$SOURCE_ZIP" ]; then
-              echo "Android kaynak ZIP dosyası veya settings.gradle bulunamadı." >&2
-              echo "QuantDesk-Sentinel-X-V1.0.0-Source.zip dosyasını depoya yükle." >&2
-              exit 1
-            fi
-
-            echo "Kaynak ZIP bulundu: $SOURCE_ZIP"
-
-            EXTRACT_DIR="$RUNNER_TEMP/quantdesk-sentinel-source"
-            mkdir -p "$EXTRACT_DIR"
-            unzip -q "$SOURCE_ZIP" -d "$EXTRACT_DIR"
-
-            PROJECT_FILE="$(find "$EXTRACT_DIR" -maxdepth 10 -type f -name settings.gradle -print -quit || true)"
-          fi
-
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "ZIP açıldı fakat settings.gradle yine bulunamadı." >&2
-            echo "Yanlış ZIP dosyası yüklenmiş olabilir." >&2
+            echo "settings.gradle bulunamadı." >&2
+            echo "ZIP içindeki dosyaları deponun ana dizinine yüklediğinden emin ol." >&2
             exit 1
           fi
 
           PROJECT_ROOT="$(dirname "$PROJECT_FILE")"
           APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
 
-          if [ ! -f "$APP_GRADLE" ]; then
+          test -f "$APP_GRADLE" || {
             echo "app/build.gradle bulunamadı." >&2
             exit 1
-          fi
+          }
 
-          grep -Fq "applicationId 'com.quantdesk.sentinel.analysis.v100'" "$APP_GRADLE" || {
-            echo "Bu kaynak Sentinel X uygulamasına ait değil." >&2
+          grep -Fq "applicationId 'com.quantdesk.autopilot.live.v100'" "$APP_GRADLE" || {
+            echo "Autopilot Live uygulama kimliği bulunamadı." >&2
             exit 1
           }
 
           grep -Fq "versionName '1.0.0'" "$APP_GRADLE" || {
-            echo "Sentinel X versionName 1.0.0 bulunamadı." >&2
+            echo "Autopilot Live versionName 1.0.0 bulunamadı." >&2
             exit 1
           }
 
           echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
-          echo "Android projesi bulundu: $PROJECT_ROOT"
+          echo "Android project: $PROJECT_ROOT"
 
       - name: Validate bundled UI and source
         shell: bash
@@ -104,7 +86,10 @@ jobs:
           grep -Fq 'android.useAndroidX=true' gradle.properties
           grep -Fq "implementation 'com.squareup.okhttp3:okhttp:4.12.0'" app/build.gradle
           grep -Fq "implementation 'androidx.webkit:webkit:1.16.0'" app/build.gradle
-          grep -Fq 'android:label="QuantDesk Sentinel X"' app/src/main/AndroidManifest.xml
+          grep -Fq 'android:label="QuantDesk Autopilot Live"' app/src/main/AndroidManifest.xml
+          grep -Fq 'class BinanceExecutionClient' app/src/main/java/com/quantdesk/aegis/BinanceExecutionClient.java
+          grep -Fq 'configureLiveTrading' app/src/main/java/com/quantdesk/aegis/MainActivity.java
+          grep -Fq 'autoTrade' app/src/main/java/com/quantdesk/aegis/MainActivity.java
 
       - name: Run unit tests
         shell: bash
@@ -133,17 +118,17 @@ jobs:
         if: always() && steps.lint.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: QuantDesk-Sentinel-X-V1.0.0-Lint-Report
+          name: QuantDesk-Autopilot-Live-V1.0.0-Lint-Report
           path: |
             ${{ steps.project.outputs.root }}/app/build/reports/lint-results-debug.html
             ${{ steps.project.outputs.root }}/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
           if-no-files-found: warn
 
-      - name: Upload Sentinel X APK
+      - name: Upload Autopilot Live APK
         if: success() || steps.lint.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: QuantDesk-Sentinel-X-V1.0.0-SEPARATE
+          name: QuantDesk-Autopilot-Live-V1.0.0-SEPARATE
           path: ${{ steps.project.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
@@ -151,5 +136,5 @@ jobs:
         if: steps.lint.outcome == 'failure'
         shell: bash
         run: |
-          echo "Android Lint başarısız oldu. Lint Report artefaktını indir." >&2
+          echo "Android Lint başarısız oldu. Tanılama için Lint Report artefaktını indir." >&2
           exit 1
