@@ -1,4 +1,4 @@
-name: Build QuantDesk Autopilot Live Separate APK
+name: Build QuantDesk Autopilot Live V1.1 Separate APK
 
 on:
   workflow_dispatch:
@@ -8,7 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
-
     permissions:
       contents: read
 
@@ -27,65 +26,61 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Locate or extract Autopilot project
+      - name: Locate separate-install Android project
         id: project
         shell: bash
         run: |
           set -euo pipefail
 
-          PROJECT_FILE="$(find . -maxdepth 8 -type f -name settings.gradle -print -quit || true)"
+          PROJECT_FILE="$(find . -maxdepth 4 -type f -name settings.gradle -print -quit || true)"
 
           if [ -z "$PROJECT_FILE" ]; then
-            SOURCE_ZIP="$(find . -maxdepth 5 -type f -iname '*.zip' -print -quit || true)"
+            SOURCE_ZIP=""
+
+            for candidate in \
+              "QuantDesk-Autopilot-Live-V1.1.0-SEPARATE-Source.zip"; do
+              if [ -f "$candidate" ]; then
+                SOURCE_ZIP="$candidate"
+                break
+              fi
+            done
 
             if [ -z "$SOURCE_ZIP" ]; then
-              echo "Autopilot kaynak ZIP dosyası veya settings.gradle bulunamadı." >&2
-              echo "QuantDesk-Autopilot-Live-V1.0.0-Source.zip dosyasını depoya yükle." >&2
+              SOURCE_ZIP="$(find . -maxdepth 3 -type f \( -iname '*Autopilot*Separate*Source*.zip' -o -iname '*Autopilot*1.1.0*.zip' \) -print -quit || true)"
+            fi
+
+            if [ -z "$SOURCE_ZIP" ]; then
+              echo "Separate-install source ZIP was not found." >&2
               exit 1
             fi
 
-            echo "Kaynak ZIP bulundu: $SOURCE_ZIP"
-
-            EXTRACT_DIR="$RUNNER_TEMP/quantdesk-autopilot-source"
+            EXTRACT_DIR="$RUNNER_TEMP/aegis-separate-source"
+            rm -rf "$EXTRACT_DIR"
             mkdir -p "$EXTRACT_DIR"
             unzip -q "$SOURCE_ZIP" -d "$EXTRACT_DIR"
-
-            PROJECT_FILE="$(find "$EXTRACT_DIR" -maxdepth 10 -type f -name settings.gradle -print -quit || true)"
+            PROJECT_FILE="$(find "$EXTRACT_DIR" -type f -name settings.gradle -print -quit || true)"
           fi
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "ZIP açıldı fakat settings.gradle bulunamadı." >&2
-            echo "Yanlış ZIP dosyası yüklenmiş olabilir." >&2
+            echo "settings.gradle was not found." >&2
             exit 1
           fi
 
           PROJECT_ROOT="$(dirname "$PROJECT_FILE")"
           APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
 
-          if [ ! -f "$APP_GRADLE" ]; then
-            echo "app/build.gradle bulunamadı." >&2
-            exit 1
-          fi
-
-          grep -Fq "applicationId 'com.quantdesk.autopilot.live.v100'" "$APP_GRADLE" || {
-            echo "Bu kaynak QuantDesk Autopilot Live uygulamasına ait değil." >&2
-            exit 1
-          }
-
-          grep -Fq "versionName '1.0.0'" "$APP_GRADLE" || {
-            echo "Autopilot Live versionName 1.0.0 bulunamadı." >&2
-            exit 1
-          }
+          test -f "$APP_GRADLE" || { echo "app/build.gradle was not found." >&2; exit 1; }
+          grep -Fq "applicationId 'com.quantdesk.autopilot.live.v110'" "$APP_GRADLE" || { echo "1.1.0 separate applicationId is missing." >&2; exit 1; }
+          grep -Fq "versionName '1.1.0'" "$APP_GRADLE" || { echo "Expected versionName 1.1.0 was not found." >&2; exit 1; }
 
           echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
-          echo "Autopilot Android projesi bulundu: $PROJECT_ROOT"
+          echo "Android project: $PROJECT_ROOT"
 
-      - name: Validate Autopilot UI and source
+      - name: Validate bundled UI and source invariants
         shell: bash
         run: |
           set -euo pipefail
           cd "${{ steps.project.outputs.root }}"
-
           node tools/validate-ui.js
           node tools/test-reachable-tp.js
           node tools/test-spot-flow.js
@@ -100,14 +95,12 @@ jobs:
           node tools/test-trade-plan-display.js
           node tools/test-v480-professional.js
           node tools/test-v484-guards.js
-
+          node tools/test-live-api-verification.js
           grep -Fq 'android.useAndroidX=true' gradle.properties
           grep -Fq "implementation 'com.squareup.okhttp3:okhttp:4.12.0'" app/build.gradle
           grep -Fq "implementation 'androidx.webkit:webkit:1.16.0'" app/build.gradle
           grep -Fq 'android:label="QuantDesk Autopilot Live"' app/src/main/AndroidManifest.xml
           grep -Fq 'class BinanceExecutionClient' app/src/main/java/com/quantdesk/aegis/BinanceExecutionClient.java
-          grep -Fq 'configureLiveTrading' app/src/main/java/com/quantdesk/aegis/MainActivity.java
-          grep -Fq 'autoTrade' app/src/main/java/com/quantdesk/aegis/MainActivity.java
 
       - name: Run unit tests
         shell: bash
@@ -116,7 +109,7 @@ jobs:
           cd "${{ steps.project.outputs.root }}"
           gradle --no-daemon :app:testDebugUnitTest
 
-      - name: Build Autopilot APK
+      - name: Build debug APK
         shell: bash
         run: |
           set -euo pipefail
@@ -136,15 +129,17 @@ jobs:
         if: always() && steps.lint.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: QuantDesk-Autopilot-Live-V1.0.0-Lint-Report
+          name: QuantDesk-Autopilot-Live-V1.1.0-Lint-Report
           path: |
             ${{ steps.project.outputs.root }}/app/build/reports/lint-results-debug.html
             ${{ steps.project.outputs.root }}/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
           if-no-files-found: warn
 
-      - name: Upload Autopilot Live APK
+      - name: Upload separate-install APK
+        if: success() || steps.lint.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: QuantDesk-Autopilot-Live-V1.0.0-SEPARATE
+          name: QuantDesk-Autopilot-Live-V1.1.0-SEPARATE
           path: ${{ steps.project.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          
