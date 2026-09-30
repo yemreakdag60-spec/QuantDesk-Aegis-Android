@@ -1,94 +1,204 @@
 name: Build QuantDesk Prism APK
+
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
-    paths:
-      - '**.zip'
-      - 'app/**'
-      - '*.gradle'
-      - 'gradle.properties'
-      - 'tests/**'
-      - '.github/workflows/build-apk.yml'
+    branches:
+      - main
+      - master
+
 permissions:
   contents: read
+
 concurrency:
   group: prism-build-${{ github.ref }}
   cancel-in-progress: true
+
 jobs:
   android:
+    name: Build Prism APK
     runs-on: ubuntu-latest
     timeout-minutes: 25
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Prepare complete source
+
+      - name: Locate and extract Prism source
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import os, zipfile
-          if Path('app/build.gradle').is_file() and Path('settings.gradle').is_file():
-              source = Path('.').resolve()
+          import os
+          import zipfile
+
+          root = Path.cwd()
+
+          if (
+              (root / "app/build.gradle").is_file()
+              and (root / "settings.gradle").is_file()
+          ):
+              source = root
+              print("Using Android project in repository root.")
           else:
-              archives = sorted(Path('.').glob('QuantDesk-Prism-*-Source.zip'))
-              if len(archives) != 1:
-                  raise SystemExit('Repository root must contain exactly one QuantDesk-Prism-*-Source.zip; remove older Prism source ZIPs.')
-              source = Path('prism-source').resolve()
+              archives = sorted(
+                  path
+                  for path in root.glob("QuantDesk-Prism-*-Source*.zip")
+                  if path.is_file()
+              )
+
+              if not archives:
+                  print("Files in repository root:")
+                  for path in sorted(root.iterdir()):
+                      print(" -", path.name)
+
+                  raise SystemExit(
+                      "Prism source ZIP not found. Upload "
+                      "QuantDesk-Prism-1.0.0-Source.zip "
+                      "to the repository root."
+                  )
+
+              if len(archives) > 1:
+                  print("Multiple Prism source ZIP files found:")
+                  for path in archives:
+                      print(" -", path.name)
+
+                  raise SystemExit(
+                      "Keep exactly one Prism source ZIP "
+                      "in the repository root."
+                  )
+
+              archive = archives[0]
+              print("Selected source ZIP:", archive.name)
+
+              source = root / "prism-source"
               source.mkdir(exist_ok=True)
-              with zipfile.ZipFile(archives[0]) as z:
-                  for member in z.infolist():
-                      target = (source / member.filename).resolve()
-                      if not target.is_relative_to(source):
-                          raise SystemExit('Unsafe ZIP path')
-                  z.extractall(source)
-              if not (source / 'app/build.gradle').is_file():
-                  raise SystemExit('Source ZIP structure is invalid')
-          with open(os.environ['GITHUB_ENV'], 'a') as env:
-              env.write('PRISM_SOURCE=' + str(source) + '\n')
+              source = source.resolve()
+
+              with zipfile.ZipFile(archive) as bundle:
+                  for member in bundle.infolist():
+                      destination = (
+                          source / member.filename
+                      ).resolve()
+
+                      if not destination.is_relative_to(source):
+                          raise SystemExit(
+                              "Unsafe path in source ZIP: "
+                              + member.filename
+                          )
+
+                  bundle.extractall(source)
+
+              required_files = [
+                  "settings.gradle",
+                  "build.gradle",
+                  "app/build.gradle",
+                  "app/src/main/AndroidManifest.xml",
+                  "tests/engine.test.cjs",
+              ]
+
+              for filename in required_files:
+                  if not (source / filename).is_file():
+                      raise SystemExit(
+                          "Required source file missing: "
+                          + filename
+                      )
+
+          with open(
+              os.environ["GITHUB_ENV"],
+              "a",
+              encoding="utf-8",
+          ) as environment:
+              environment.write(
+                  "PRISM_SOURCE=" + str(source) + "\n"
+              )
+
+          print("Source directory:", source)
           PY
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-      - name: Install required Android platform
-        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
+
+      - name: Install Android platform and build tools
+        shell: bash
+        run: |
+          sdkmanager \
+            "platforms;android-35" \
+            "build-tools;34.0.0"
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
-      - name: Set up Node for analysis tests
+          gradle-version: "8.9"
+
+      - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
+
       - name: Verify analysis engine
         working-directory: ${{ env.PRISM_SOURCE }}
-        run: node --test tests/engine.test.cjs
-      - name: Build APK and run Android lint
-        working-directory: ${{ env.PRISM_SOURCE }}
-        run: gradle --no-daemon --stacktrace :app:assembleDebug :app:lintDebug
-      - name: Package installable APK
         shell: bash
         run: |
-          mkdir -p output
-          cp "$PRISM_SOURCE/app/build/outputs/apk/debug/app-debug.apk" output/QuantDesk-Prism-1.0.0.apk
-          cd output
-          sha256sum QuantDesk-Prism-1.0.0.apk > SHA256.txt
-      - name: Upload APK
+          node --check app/src/main/assets/engine.js
+          node --check app/src/main/assets/app.js
+          node --test tests/engine.test.cjs
+
+      - name: Build APK and run Android lint
+        working-directory: ${{ env.PRISM_SOURCE }}
+        shell: bash
+        run: |
+          gradle \
+            --no-daemon \
+            --stacktrace \
+            :app:assembleDebug \
+            :app:lintDebug
+
+      - name: Prepare APK download
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK_PATH="$PRISM_SOURCE/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -s "$APK_PATH" ]; then
+            echo "APK was not generated at the expected location."
+            exit 1
+          fi
+
+          mkdir -p "$GITHUB_WORKSPACE/output"
+
+          cp \
+            "$APK_PATH" \
+            "$GITHUB_WORKSPACE/output/QuantDesk-Prism-1.0.0.apk"
+
+          cd "$GITHUB_WORKSPACE/output"
+
+          sha256sum \
+            QuantDesk-Prism-1.0.0.apk \
+            > SHA256.txt
+
+      - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
           name: QuantDesk-Prism-1.0.0-APK
-          path: output/
+          path: |
+            output/QuantDesk-Prism-1.0.0.apk
+            output/SHA256.txt
           if-no-files-found: error
           retention-days: 30
-      - name: Upload diagnostic reports
-        if: always()
+
+      - name: Upload build reports
+        if: ${{ always() && env.PRISM_SOURCE != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: QuantDesk-Prism-build-reports
-          path: |
-            ${{ env.PRISM_SOURCE }}/app/build/reports/
+          path: ${{ env.PRISM_SOURCE }}/app/build/reports/
           if-no-files-found: ignore
+          retention-days: 7
