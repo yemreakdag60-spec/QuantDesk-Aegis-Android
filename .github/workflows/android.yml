@@ -1,145 +1,94 @@
-name: Build QuantDesk Autopilot Live V1.1 Separate APK
-
+name: Build QuantDesk Prism APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
-
+    branches: [main, master]
+    paths:
+      - '**.zip'
+      - 'app/**'
+      - '*.gradle'
+      - 'gradle.properties'
+      - 'tests/**'
+      - '.github/workflows/build-apk.yml'
+permissions:
+  contents: read
+concurrency:
+  group: prism-build-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  build:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
-
+        uses: actions/checkout@v4
+      - name: Prepare complete source
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, zipfile
+          if Path('app/build.gradle').is_file() and Path('settings.gradle').is_file():
+              source = Path('.').resolve()
+          else:
+              archives = sorted(Path('.').glob('QuantDesk-Prism-*-Source.zip'))
+              if len(archives) != 1:
+                  raise SystemExit('Repository root must contain exactly one QuantDesk-Prism-*-Source.zip; remove older Prism source ZIPs.')
+              source = Path('prism-source').resolve()
+              source.mkdir(exist_ok=True)
+              with zipfile.ZipFile(archives[0]) as z:
+                  for member in z.infolist():
+                      target = (source / member.filename).resolve()
+                      if not target.is_relative_to(source):
+                          raise SystemExit('Unsafe ZIP path')
+                  z.extractall(source)
+              if not (source / 'app/build.gradle').is_file():
+                  raise SystemExit('Source ZIP structure is invalid')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('PRISM_SOURCE=' + str(source) + '\n')
+          PY
       - name: Set up Java 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Gradle 8.13
-        uses: gradle/actions/setup-gradle@v5
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install required Android platform
+        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.13'
-
-      - name: Locate separate-install Android project
-        id: project
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT_FILE="$(find . -maxdepth 4 -type f -name settings.gradle -print -quit || true)"
-
-          if [ -z "$PROJECT_FILE" ]; then
-            SOURCE_ZIP=""
-
-            for candidate in \
-              "QuantDesk-Autopilot-Live-V1.1.0-SEPARATE-Source.zip"; do
-              if [ -f "$candidate" ]; then
-                SOURCE_ZIP="$candidate"
-                break
-              fi
-            done
-
-            if [ -z "$SOURCE_ZIP" ]; then
-              SOURCE_ZIP="$(find . -maxdepth 3 -type f \( -iname '*Autopilot*Separate*Source*.zip' -o -iname '*Autopilot*1.1.0*.zip' \) -print -quit || true)"
-            fi
-
-            if [ -z "$SOURCE_ZIP" ]; then
-              echo "Separate-install source ZIP was not found." >&2
-              exit 1
-            fi
-
-            EXTRACT_DIR="$RUNNER_TEMP/aegis-separate-source"
-            rm -rf "$EXTRACT_DIR"
-            mkdir -p "$EXTRACT_DIR"
-            unzip -q "$SOURCE_ZIP" -d "$EXTRACT_DIR"
-            PROJECT_FILE="$(find "$EXTRACT_DIR" -type f -name settings.gradle -print -quit || true)"
-          fi
-
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "settings.gradle was not found." >&2
-            exit 1
-          fi
-
-          PROJECT_ROOT="$(dirname "$PROJECT_FILE")"
-          APP_GRADLE="$PROJECT_ROOT/app/build.gradle"
-
-          test -f "$APP_GRADLE" || { echo "app/build.gradle was not found." >&2; exit 1; }
-          grep -Fq "applicationId 'com.quantdesk.autopilot.live.v110'" "$APP_GRADLE" || { echo "1.1.0 separate applicationId is missing." >&2; exit 1; }
-          grep -Fq "versionName '1.1.0'" "$APP_GRADLE" || { echo "Expected versionName 1.1.0 was not found." >&2; exit 1; }
-
-          echo "root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
-          echo "Android project: $PROJECT_ROOT"
-
-      - name: Validate bundled UI and source invariants
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${{ steps.project.outputs.root }}"
-          node tools/validate-ui.js
-          node tools/test-reachable-tp.js
-          node tools/test-spot-flow.js
-          node tools/test-live-watch-queue.js
-          node tools/test-levels-valid.js
-          node tools/test-stretch-gate.js
-          node tools/test-target-selection.js
-          node tools/test-closed-candles.js
-          node tools/test-indicator-core.js
-          node tools/test-walk-forward-gate.js
-          node tools/test-position-sizing-guard.js
-          node tools/test-trade-plan-display.js
-          node tools/test-v480-professional.js
-          node tools/test-v484-guards.js
-          node tools/test-live-api-verification.js
-          grep -Fq 'android.useAndroidX=true' gradle.properties
-          grep -Fq "implementation 'com.squareup.okhttp3:okhttp:4.12.0'" app/build.gradle
-          grep -Fq "implementation 'androidx.webkit:webkit:1.16.0'" app/build.gradle
-          grep -Fq 'android:label="QuantDesk Autopilot Live"' app/src/main/AndroidManifest.xml
-          grep -Fq 'class BinanceExecutionClient' app/src/main/java/com/quantdesk/aegis/BinanceExecutionClient.java
-
-      - name: Run unit tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${{ steps.project.outputs.root }}"
-          gradle --no-daemon :app:testDebugUnitTest
-
-      - name: Build debug APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${{ steps.project.outputs.root }}"
-          gradle --no-daemon :app:assembleDebug
-
-      - name: Run Android Lint
-        id: lint
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${{ steps.project.outputs.root }}"
-          gradle --no-daemon :app:lintDebug
-
-      - name: Upload Lint report
-        if: always() && steps.lint.outcome == 'failure'
-        uses: actions/upload-artifact@v6
+          gradle-version: '8.9'
+      - name: Set up Node for analysis tests
+        uses: actions/setup-node@v4
         with:
-          name: QuantDesk-Autopilot-Live-V1.1.0-Lint-Report
-          path: |
-            ${{ steps.project.outputs.root }}/app/build/reports/lint-results-debug.html
-            ${{ steps.project.outputs.root }}/app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
-          if-no-files-found: warn
-
-      - name: Upload separate-install APK
-        if: success() || steps.lint.outcome == 'failure'
-        uses: actions/upload-artifact@v6
+          node-version: '22'
+      - name: Verify analysis engine
+        working-directory: ${{ env.PRISM_SOURCE }}
+        run: node --test tests/engine.test.cjs
+      - name: Build APK and run Android lint
+        working-directory: ${{ env.PRISM_SOURCE }}
+        run: gradle --no-daemon --stacktrace :app:assembleDebug :app:lintDebug
+      - name: Package installable APK
+        shell: bash
+        run: |
+          mkdir -p output
+          cp "$PRISM_SOURCE/app/build/outputs/apk/debug/app-debug.apk" output/QuantDesk-Prism-1.0.0.apk
+          cd output
+          sha256sum QuantDesk-Prism-1.0.0.apk > SHA256.txt
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          name: QuantDesk-Autopilot-Live-V1.1.0-SEPARATE
-          path: ${{ steps.project.outputs.root }}/app/build/outputs/apk/debug/app-debug.apk
+          name: QuantDesk-Prism-1.0.0-APK
+          path: output/
           if-no-files-found: error
-          
+          retention-days: 30
+      - name: Upload diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuantDesk-Prism-build-reports
+          path: |
+            ${{ env.PRISM_SOURCE }}/app/build/reports/
+          if-no-files-found: ignore
