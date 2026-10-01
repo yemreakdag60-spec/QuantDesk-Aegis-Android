@@ -1,286 +1,107 @@
-name: Build QuantDesk Prism APK
-
+name: Build Prism Analysis 2.1 APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
-    paths:
-      - '**.zip'
-      - 'app/**'
-      - 'src/**'
-      - '**/*.gradle'
-      - '**/*.gradle.kts'
-      - 'gradle/**'
-      - 'gradle.properties'
-      - 'settings.gradle'
-      - 'settings.gradle.kts'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tests/**'
-      - '.github/workflows/build-apk.yml'
-
+    branches: [main, master]
+    paths: ['**.zip', 'app/**', 'server/**', 'tests/**', '*.gradle', 'gradle.properties', '.github/workflows/**']
 permissions:
   contents: read
-
 concurrency:
-  group: prism-build-${{ github.ref }}
+  group: prism-analysis-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   android:
-    name: Build Prism APK
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-
-      - name: Locate and extract Prism source
+      - name: Prepare complete analysis source
         shell: bash
         run: |
-          set -Eeuo pipefail
-
-          PROJECT_DIR=""
-
-          # 1) Android projesi doğrudan repo kökündeyse onu kullan.
-          if { [ -f "$GITHUB_WORKSPACE/settings.gradle" ] || [ -f "$GITHUB_WORKSPACE/settings.gradle.kts" ]; } \
-             && [ -d "$GITHUB_WORKSPACE/app" ]; then
-            PROJECT_DIR="$GITHUB_WORKSPACE"
-          fi
-
-          # 2) Değilse repodaki ZIP'i bul ve geçici klasöre çıkar.
-          if [ -z "$PROJECT_DIR" ]; then
-            ZIP_FILE="$(
-              find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -iname '*.zip' \
-                -printf '%T@ %p\n' 2>/dev/null \
-              | sort -nr \
-              | head -n 1 \
-              | cut -d' ' -f2-
-            )"
-
-            if [ -z "${ZIP_FILE:-}" ]; then
-              echo "::error::Android proje kökü bulunamadı ve repoda kaynak ZIP dosyası yok."
-              exit 1
-            fi
-
-            echo "Using source ZIP: $ZIP_FILE"
-            EXTRACT_DIR="$RUNNER_TEMP/prism-source"
-            rm -rf "$EXTRACT_DIR"
-            mkdir -p "$EXTRACT_DIR"
-            unzip -q -o "$ZIP_FILE" -d "$EXTRACT_DIR"
-
-            while IFS= read -r -d '' SETTINGS_FILE; do
-              CANDIDATE="$(dirname "$SETTINGS_FILE")"
-              if [ -d "$CANDIDATE/app" ]; then
-                PROJECT_DIR="$CANDIDATE"
-                break
-              fi
-            done < <(
-              find "$EXTRACT_DIR" -maxdepth 7 -type f \
-                \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
-                -print0
-            )
-          fi
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::ZIP açıldı fakat settings.gradle/settings.gradle.kts ve app klasörü içeren Android proje kökü bulunamadı."
-            echo "ZIP içeriğinin ilk bölümü:"
-            find "$RUNNER_TEMP/prism-source" -maxdepth 4 -type f | head -n 80 || true
-            exit 1
-          fi
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project: $PROJECT_DIR"
-          ls -la "$PROJECT_DIR"
-
-      - name: Set up Java 17
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, zipfile
+          if Path('app/build.gradle').is_file() and Path('settings.gradle').is_file():
+              source = Path('.').resolve()
+          else:
+              archive = Path('QuantDesk-Prism-Analysis-2.1.0-Source.zip')
+              if not archive.is_file():
+                  raise SystemExit('Repository root must contain QuantDesk-Prism-Analysis-2.1.0-Source.zip or the extracted app project.')
+              dest = Path('prism-source').resolve()
+              dest.mkdir(exist_ok=True)
+              with zipfile.ZipFile(archive) as z:
+                  if sum(m.file_size for m in z.infolist()) > 100_000_000:
+                      raise SystemExit('Archive size limit')
+                  for m in z.infolist():
+                      if not (dest / m.filename).resolve().is_relative_to(dest):
+                          raise SystemExit('Unsafe ZIP path')
+                  z.extractall(dest)
+              projects = [p.parent for p in dest.rglob('settings.gradle') if (p.parent / 'app/build.gradle').is_file()]
+              if len(projects) != 1:
+                  raise SystemExit('Expected exactly one Android project')
+              source = projects[0]
+          for name in ['quant.js', 'pro.js', 'charts.js', 'research.js', 'analytics.js', 'advanced.js']:
+              if not (source / 'app/src/main/assets' / name).is_file():
+                  raise SystemExit('Missing source: ' + name)
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write('PRISM_SOURCE=' + str(source) + '\n')
+          PY
+      - name: Java 17
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: ''
-          log-accepted-android-sdk-licenses: false
-
-      - name: Install Android platform and build tools
+      - name: Use preinstalled Android SDK
         shell: bash
         run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-
-          COMPILE_SDK="$(
-            grep -REh \
-              --include='*.gradle' \
-              --include='*.gradle.kts' \
-              'compileSdk(Version)?[[:space:]]*(=)?[[:space:]]*[0-9]+' \
-              . 2>/dev/null \
-            | grep -oE '[0-9]+' \
-            | head -n 1 || true
-          )"
-
-          if [ -z "$COMPILE_SDK" ]; then
-            COMPILE_SDK="35"
-            echo "::notice::compileSdk otomatik bulunamadı; Android API 35 kullanılacak."
-          fi
-
-          BUILD_TOOLS="$(
-            grep -REh \
-              --include='*.gradle' \
-              --include='*.gradle.kts' \
-              'buildToolsVersion' \
-              . 2>/dev/null \
-            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' \
-            | head -n 1 || true
-          )"
-
-          if [ -z "$BUILD_TOOLS" ]; then
-            BUILD_TOOLS="${COMPILE_SDK}.0.0"
-          fi
-
-          echo "compileSdk: $COMPILE_SDK"
-          echo "build-tools: $BUILD_TOOLS"
-
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-${COMPILE_SDK}" \
-            "build-tools;${BUILD_TOOLS}"
-
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v6
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDK_ROOT" || { echo 'Android SDK unavailable'; exit 1; }
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER" || { echo 'sdkmanager unavailable'; exit 1; }
+          set +e
+          yes | "$SDKMANAGER" --licenses
+          SDK_STATUS=${PIPESTATUS[1]}
+          set -e
+          test "$SDK_STATUS" -eq 0 || exit "$SDK_STATUS"
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;34.0.0'
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: '8.9'
-
-      - name: Set up Node 22
+      - name: Node 24
         uses: actions/setup-node@v7
         with:
-          node-version: '22'
-          package-manager-cache: false
-
-      - name: Verify analysis engine
+          node-version: '24'
+      - name: Analysis and server verification
+        working-directory: ${{ env.PRISM_SOURCE }}
         shell: bash
         run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-
-          if [ ! -f package.json ]; then
-            echo "No package.json found; Node verification is not required."
-            exit 0
-          fi
-
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install --no-audit --no-fund
-          fi
-
-          npm test --if-present
-          npm run verify --if-present
-
-      - name: Build APK
+          for FILE in app/src/main/assets/*.js server/*.cjs; do node --check "$FILE"; done
+          node --test tests/engine.test.cjs tests/quant.test.cjs tests/analytics.test.cjs tests/server.test.cjs tests/monitor.test.cjs
+      - name: Build and lint
+        working-directory: ${{ env.PRISM_SOURCE }}
+        run: gradle --no-daemon --stacktrace :app:assembleDebug :app:lintDebug
+      - name: Package APK
         shell: bash
         run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew --no-daemon --stacktrace clean assembleDebug
-          else
-            gradle --no-daemon --stacktrace clean assembleDebug
-          fi
-
-      - name: Run Android Lint
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cd "$PROJECT_DIR"
-
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew --no-daemon --stacktrace lintDebug
-          else
-            gradle --no-daemon --stacktrace lintDebug
-          fi
-
-      - name: Prepare APK download
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          OUT_DIR="$GITHUB_WORKSPACE/prism-apk"
-          rm -rf "$OUT_DIR"
-          mkdir -p "$OUT_DIR"
-
-          COUNT=0
-          while IFS= read -r -d '' APK; do
-            BASENAME="$(basename "$APK")"
-            cp "$APK" "$OUT_DIR/$BASENAME"
-            echo "Prepared: $APK"
-            COUNT=$((COUNT + 1))
-          done < <(
-            find "$PROJECT_DIR" -type f \
-              -path '*/build/outputs/apk/*/*.apk' \
-              ! -path '*/androidTest/*' \
-              -print0
-          )
-
-          if [ "$COUNT" -eq 0 ]; then
-            echo "::error::Gradle tamamlandı fakat APK dosyası bulunamadı."
-            find "$PROJECT_DIR" -type f -path '*/build/outputs/*' | head -n 100 || true
-            exit 1
-          fi
-
-          echo "Prepared $COUNT APK file(s)."
-          ls -lh "$OUT_DIR"
-
+          mkdir -p output
+          cp "$PRISM_SOURCE/app/build/outputs/apk/debug/app-debug.apk" output/Prism-Analiz-2.1.0.apk
+          cd output
+          sha256sum Prism-Analiz-2.1.0.apk > SHA256.txt
       - name: Upload installable APK
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
-          name: QuantDesk-Prism-APK
-          path: prism-apk/*.apk
+          name: Prism-Analiz-2.1.0-APK
+          path: output/
           if-no-files-found: error
-          retention-days: 14
-
-      - name: Collect build reports
-        if: always()
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          REPORT_DIR="$GITHUB_WORKSPACE/build-reports"
-          rm -rf "$REPORT_DIR"
-          mkdir -p "$REPORT_DIR"
-
-          if [ -z "${PROJECT_DIR:-}" ] || [ ! -d "$PROJECT_DIR" ]; then
-            echo "Project directory is unavailable; no build reports to collect."
-            exit 0
-          fi
-
-          COUNT=0
-          while IFS= read -r -d '' REPORT; do
-            SAFE_NAME="$(echo "$REPORT" | sed 's#[/ ]#_#g')"
-            cp "$REPORT" "$REPORT_DIR/${SAFE_NAME##*_build_reports_}"
-            COUNT=$((COUNT + 1))
-          done < <(
-            find "$PROJECT_DIR" -type f -path '*/build/reports/*' -print0 2>/dev/null || true
-          )
-
-          echo "Collected $COUNT report file(s)."
-
-      - name: Upload build reports
-        if: always()
-        uses: actions/upload-artifact@v6
+          retention-days: 30
+      - name: Upload diagnostic reports
+        if: always() && env.PRISM_SOURCE != ''
+        uses: actions/upload-artifact@v7
         with:
-          name: QuantDesk-Prism-Build-Reports
-          path: build-reports/**
+          name: Prism-Analiz-2.1.0-reports
+          path: ${{ env.PRISM_SOURCE }}/app/build/reports/
           if-no-files-found: ignore
-          retention-days: 7
           
