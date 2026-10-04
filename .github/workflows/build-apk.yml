@@ -23,7 +23,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: FlowScope-Futures-1.0.0
+          name: FlowScope-Futures-1.0.1
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          
