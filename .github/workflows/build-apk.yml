@@ -1,107 +1,29 @@
-name: Build Prism Analysis 2.1 APK
+name: Build FlowScope Futures APK
+
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
-    paths: ['**.zip', 'app/**', 'server/**', 'tests/**', '*.gradle', 'gradle.properties', '.github/workflows/**']
+    branches: [ main ]
+
 permissions:
   contents: read
-concurrency:
-  group: prism-analysis-${{ github.ref }}
-  cancel-in-progress: true
+
 jobs:
-  android:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-      - name: Prepare complete analysis source
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import os, zipfile
-          if Path('app/build.gradle').is_file() and Path('settings.gradle').is_file():
-              source = Path('.').resolve()
-          else:
-              archive = Path('QuantDesk-Prism-Analysis-2.1.0-Source.zip')
-              if not archive.is_file():
-                  raise SystemExit('Repository root must contain QuantDesk-Prism-Analysis-2.1.0-Source.zip or the extracted app project.')
-              dest = Path('prism-source').resolve()
-              dest.mkdir(exist_ok=True)
-              with zipfile.ZipFile(archive) as z:
-                  if sum(m.file_size for m in z.infolist()) > 100_000_000:
-                      raise SystemExit('Archive size limit')
-                  for m in z.infolist():
-                      if not (dest / m.filename).resolve().is_relative_to(dest):
-                          raise SystemExit('Unsafe ZIP path')
-                  z.extractall(dest)
-              projects = [p.parent for p in dest.rglob('settings.gradle') if (p.parent / 'app/build.gradle').is_file()]
-              if len(projects) != 1:
-                  raise SystemExit('Expected exactly one Android project')
-              source = projects[0]
-          for name in ['quant.js', 'pro.js', 'charts.js', 'research.js', 'analytics.js', 'advanced.js']:
-              if not (source / 'app/src/main/assets' / name).is_file():
-                  raise SystemExit('Missing source: ' + name)
-          with open(os.environ['GITHUB_ENV'], 'a') as env:
-              env.write('PRISM_SOURCE=' + str(source) + '\n')
-          PY
-      - name: Java 17
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Use preinstalled Android SDK
-        shell: bash
-        run: |
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          test -n "$SDK_ROOT" || { echo 'Android SDK unavailable'; exit 1; }
-          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$SDKMANAGER" || { echo 'sdkmanager unavailable'; exit 1; }
-          set +e
-          yes | "$SDKMANAGER" --licenses
-          SDK_STATUS=${PIPESTATUS[1]}
-          set -e
-          test "$SDK_STATUS" -eq 0 || exit "$SDK_STATUS"
-          "$SDKMANAGER" 'platforms;android-35' 'build-tools;34.0.0'
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-      - name: Gradle 8.9
-        uses: gradle/actions/setup-gradle@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Java 17 and Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Node 24
-        uses: actions/setup-node@v7
+      - name: Build debug APK
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          node-version: '24'
-      - name: Analysis and server verification
-        working-directory: ${{ env.PRISM_SOURCE }}
-        shell: bash
-        run: |
-          for FILE in app/src/main/assets/*.js server/*.cjs; do node --check "$FILE"; done
-          node --test tests/engine.test.cjs tests/quant.test.cjs tests/analytics.test.cjs tests/server.test.cjs tests/monitor.test.cjs
-      - name: Build and lint
-        working-directory: ${{ env.PRISM_SOURCE }}
-        run: gradle --no-daemon --stacktrace :app:assembleDebug :app:lintDebug
-      - name: Package APK
-        shell: bash
-        run: |
-          mkdir -p output
-          cp "$PRISM_SOURCE/app/build/outputs/apk/debug/app-debug.apk" output/Prism-Analiz-2.1.0.apk
-          cd output
-          sha256sum Prism-Analiz-2.1.0.apk > SHA256.txt
-      - name: Upload installable APK
-        uses: actions/upload-artifact@v7
-        with:
-          name: Prism-Analiz-2.1.0-APK
-          path: output/
+          name: FlowScope-Futures-1.0.0
+          path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 30
-      - name: Upload diagnostic reports
-        if: always() && env.PRISM_SOURCE != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: Prism-Analiz-2.1.0-reports
-          path: ${{ env.PRISM_SOURCE }}/app/build/reports/
-          if-no-files-found: ignore
           
