@@ -3,26 +3,43 @@ name: Build FlowScope Futures APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Test and build Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      - name: Checkout
+      - name: Check out source
         uses: actions/checkout@v4
-      - name: Set up Java 17 and Gradle
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+
+      - name: Test analysis model
+        run: node scripts/test-analysis.cjs
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
-      - name: Upload APK
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FlowScope-Futures-1.0.1
+          name: FlowScope-Futures-1.1.0
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          
