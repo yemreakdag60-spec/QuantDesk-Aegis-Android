@@ -12,34 +12,56 @@ permissions:
 jobs:
   build:
     name: Test and build Android APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v5
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.9'
 
+      - name: Locate FlowScope project
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f FlowScope-Futures-Source.zip ]]; then
+            mkdir -p "$RUNNER_TEMP/flowscope-source"
+            unzip -q FlowScope-Futures-Source.zip -d "$RUNNER_TEMP/flowscope-source"
+            project="$RUNNER_TEMP/flowscope-source/FlowScope-Futures"
+          elif [[ -f FlowScope-Futures/app/build.gradle ]]; then
+            project="$GITHUB_WORKSPACE/FlowScope-Futures"
+          elif [[ -f app/build.gradle ]] && grep -q "applicationId 'com.emreakdag.flowscope'" app/build.gradle; then
+            project="$GITHUB_WORKSPACE"
+          else
+            echo "::error title=FlowScope source missing::Upload FlowScope-Futures-Source.zip to the repository root, or add the extracted FlowScope-Futures project. This repository currently does not contain the FlowScope app sources."
+            exit 1
+          fi
+          if [[ ! -f "$project/settings.gradle" || ! -f "$project/scripts/test-analysis.cjs" ]]; then
+            echo "::error title=Incomplete FlowScope source::The located project is missing settings.gradle or scripts/test-analysis.cjs. Upload the complete source ZIP."
+            exit 1
+          fi
+          echo "PROJECT_DIR=$project" >> "$GITHUB_ENV"
+
       - name: Test analysis model
-        run: node scripts/test-analysis.cjs
+        run: node "$PROJECT_DIR/scripts/test-analysis.cjs"
 
       - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
+        run: cd "$PROJECT_DIR" && gradle --no-daemon :app:assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: FlowScope-Futures-1.1.0
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           
