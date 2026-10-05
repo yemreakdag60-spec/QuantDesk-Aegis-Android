@@ -1,4 +1,4 @@
-name: Build FlowScope Futures APK
+name: Build QuantDesk Prism APK
 
 on:
   workflow_dispatch:
@@ -30,24 +30,24 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Locate FlowScope project
+      - name: Locate QuantDesk Prism project
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f FlowScope-Futures-Source.zip ]]; then
-            mkdir -p "$RUNNER_TEMP/flowscope-source"
-            unzip -q FlowScope-Futures-Source.zip -d "$RUNNER_TEMP/flowscope-source"
-            project="$RUNNER_TEMP/flowscope-source/FlowScope-Futures"
-          elif [[ -f FlowScope-Futures/app/build.gradle ]]; then
-            project="$GITHUB_WORKSPACE/FlowScope-Futures"
-          elif [[ -f app/build.gradle ]] && grep -q "applicationId 'com.emreakdag.flowscope'" app/build.gradle; then
+          if [[ -f QuantDesk-Prism-Source.zip ]]; then
+            mkdir -p "$RUNNER_TEMP/quantdesk-prism-source"
+            unzip -q QuantDesk-Prism-Source.zip -d "$RUNNER_TEMP/quantdesk-prism-source"
+            project="$RUNNER_TEMP/quantdesk-prism-source/QuantDesk-Prism"
+          elif [[ -f QuantDesk-Prism/app/build.gradle ]]; then
+            project="$GITHUB_WORKSPACE/QuantDesk-Prism"
+          elif [[ -f app/build.gradle ]] && grep -q "applicationId 'com.emreakdag.quantdesk.prism'" app/build.gradle; then
             project="$GITHUB_WORKSPACE"
           else
-            echo "::error title=FlowScope source missing::Upload FlowScope-Futures-Source.zip to the repository root, or add the extracted FlowScope-Futures project. This repository currently does not contain the FlowScope app sources."
+            echo "::error title=QuantDesk Prism source missing::Upload QuantDesk-Prism-Source.zip to the repository root, or add the extracted QuantDesk-Prism project. This repository currently does not contain the QuantDesk Prism app sources."
             exit 1
           fi
           if [[ ! -f "$project/settings.gradle" || ! -f "$project/scripts/test-analysis.cjs" ]]; then
-            echo "::error title=Incomplete FlowScope source::The located project is missing settings.gradle or scripts/test-analysis.cjs. Upload the complete source ZIP."
+            echo "::error title=Incomplete QuantDesk Prism source::The located project is missing settings.gradle or scripts/test-analysis.cjs. Upload the complete source ZIP."
             exit 1
           fi
           echo "PROJECT_DIR=$project" >> "$GITHUB_ENV"
@@ -61,7 +61,6 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FlowScope-Futures-1.1.0
+          name: QuantDesk-Prism-2.0.0
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          
