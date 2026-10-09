@@ -44,7 +44,7 @@ jobs:
             project="$RUNNER_TEMP/quantdesk-prism-source/QuantDesk-Prism"
           elif [[ -f QuantDesk-Prism/app/build.gradle ]]; then
             project="$GITHUB_WORKSPACE/QuantDesk-Prism"
-          elif [[ -f app/build.gradle ]] && grep -q "applicationId 'com.emreakdag.quantdesk.prism250'" app/build.gradle; then
+          elif [[ -f app/build.gradle ]] && grep -q "applicationId 'com.emreakdag.quantdesk.prism250news'" app/build.gradle; then
             project="$GITHUB_WORKSPACE"
           else
             echo "::error title=QuantDesk Prism source missing::Upload QuantDesk-Prism-Source.zip to the repository root, or add the extracted QuantDesk-Prism project. This repository currently does not contain the QuantDesk Prism app sources."
@@ -65,6 +65,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: QuantDesk-Prism-250-2.1.0
+          name: QuantDesk-Prism-Haber-1.0.0
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          
