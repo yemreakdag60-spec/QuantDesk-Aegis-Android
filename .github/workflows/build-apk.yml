@@ -34,24 +34,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f QuantDesk-Prism-250-Source.zip ]]; then
+          if [[ -f QuantDesk-Prism-Uzun-Vade-Source.zip ]]; then
             mkdir -p "$RUNNER_TEMP/quantdesk-prism-source"
-            unzip -q QuantDesk-Prism-250-Source.zip -d "$RUNNER_TEMP/quantdesk-prism-source"
+            unzip -q QuantDesk-Prism-Uzun-Vade-Source.zip -d "$RUNNER_TEMP/quantdesk-prism-source"
             project="$RUNNER_TEMP/quantdesk-prism-source/QuantDesk-Prism"
-          elif [[ -f QuantDesk-Prism-Source.zip ]]; then
-            mkdir -p "$RUNNER_TEMP/quantdesk-prism-source"
-            unzip -q QuantDesk-Prism-Source.zip -d "$RUNNER_TEMP/quantdesk-prism-source"
-            project="$RUNNER_TEMP/quantdesk-prism-source/QuantDesk-Prism"
-          elif [[ -f QuantDesk-Prism/app/build.gradle ]]; then
+          elif [[ -f QuantDesk-Prism/app/build.gradle ]] && grep -q "applicationId 'com.emreakdag.quantdesk.prism250longterm'" QuantDesk-Prism/app/build.gradle; then
             project="$GITHUB_WORKSPACE/QuantDesk-Prism"
-          elif [[ -f app/build.gradle ]] && grep -q "applicationId 'com.emreakdag.quantdesk.prism250news'" app/build.gradle; then
+          elif [[ -f app/build.gradle ]] && grep -q "applicationId 'com.emreakdag.quantdesk.prism250longterm'" app/build.gradle; then
             project="$GITHUB_WORKSPACE"
           else
-            echo "::error title=QuantDesk Prism source missing::Upload QuantDesk-Prism-Source.zip to the repository root, or add the extracted QuantDesk-Prism project. This repository currently does not contain the QuantDesk Prism app sources."
+            echo "::error title=QuantDesk Prism source missing::Upload QuantDesk-Prism-Uzun-Vade-Source.zip to the repository root, or add the extracted QuantDesk-Prism project."
             exit 1
           fi
           if [[ ! -f "$project/settings.gradle" || ! -f "$project/scripts/test-analysis.cjs" ]]; then
             echo "::error title=Incomplete QuantDesk Prism source::The located project is missing settings.gradle or scripts/test-analysis.cjs. Upload the complete source ZIP."
+            exit 1
+          fi
+          if ! grep -q "applicationId 'com.emreakdag.quantdesk.prism250longterm'" "$project/app/build.gradle"; then
+            echo "::error title=Wrong Android package::The selected project is not the separate QuantDesk Prism Uzun Vade app."
             exit 1
           fi
           echo "PROJECT_DIR=$project" >> "$GITHUB_ENV"
@@ -65,7 +65,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: QuantDesk-Prism-Haber-1.0.0
+          name: QuantDesk-Prism-Uzun-Vade-1.0.0
           path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           
